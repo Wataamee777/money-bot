@@ -1,7 +1,7 @@
 {
   "name": "discord-currency-bot",
   "version": "1.0.0",
-  "description": "シンプルなDiscord通貨Bot",
+  "description": "Discord通貨Bot＋Expressサーバーの統合プロジェクト",
   "type": "module",
   "main": "index.js",
   "scripts": {
@@ -13,6 +13,7 @@
   "dependencies": {
     "discord.js": "^14.11.0",
     "@supabase/supabase-js": "^2.0.0",
-    "dotenv": "^16.0.3"
+    "dotenv": "^16.0.3",
+    "express": "^4.18.2"
   }
 }
