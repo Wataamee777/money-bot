@@ -1,3 +1,4 @@
+import express from 'express';
 import { Client, GatewayIntentBits, Collection, Events } from 'discord.js';
 import dotenv from 'dotenv';
 import { createClient } from '@supabase/supabase-js';
@@ -8,6 +9,17 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 client.commands = new Collection();
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get('/', (req, res) => {
+  res.send('Hello World!');
+});
+
+app.listen(PORT, () => {
+  console.log(`Express server running on port ${PORT}`);
+});
 
 // 管理者チェック関数
 function isAdmin(interaction) {
