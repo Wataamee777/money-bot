@@ -1,308 +1,243 @@
-import express from 'express';
-import { Client, GatewayIntentBits, Collection, Events } from 'discord.js';
-import dotenv from 'dotenv';
+import 'dotenv/config';
+import { Client, GatewayIntentBits, Events, REST, Routes, SlashCommandBuilder } from 'discord.js';
 import { createClient } from '@supabase/supabase-js';
 
-dotenv.config();
-
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
-
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
-client.commands = new Collection();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.get('/', (req, res) => {
-  res.send('Hello World!');
+  res.send('Hello World from Express!');
 });
 
 app.listen(PORT, () => {
-  console.log(`Express server running on port ${PORT}`);
+  console.log(`🚀 Expressサーバーがポート${PORT}で起動したよ`);
 });
 
-// 管理者チェック関数
 function isAdmin(interaction) {
   return interaction.member.permissions.has('Administrator');
 }
 
-// --- コマンド処理 ---
+const commands = [
+  new SlashCommandBuilder().setName('balance').setDescription('所持金を確認'),
+  new SlashCommandBuilder().setName('daily').setDescription('毎日通貨を受け取る'),
+  new SlashCommandBuilder().setName('present').setDescription('10コインでランダム報酬をもらう'),
+  new SlashCommandBuilder()
+    .setName('give')
+    .setDescription('他の人に送金')
+    .addUserOption(opt => opt.setName('user').setDescription('送金先').setRequired(true))
+    .addIntegerOption(opt => opt.setName('amount').setDescription('送金額').setRequired(true)),
+  new SlashCommandBuilder().setName('shop').setDescription('商品一覧を見る'),
+  new SlashCommandBuilder()
+    .setName('shopinfo')
+    .setDescription('商品の詳細を見る')
+    .addStringOption(opt => opt.setName('item').setDescription('商品名').setRequired(true)),
+  new SlashCommandBuilder()
+    .setName('buy')
+    .setDescription('商品を購入する')
+    .addStringOption(opt => opt.setName('item').setDescription('商品名').setRequired(true))
+    .addIntegerOption(opt => opt.setName('quantity').setDescription('数量').setRequired(false)),
+  new SlashCommandBuilder().setName('inventory').setDescription('持ち物を確認'),
+  new SlashCommandBuilder().setName('help').setDescription('コマンド説明を見る'),
+  new SlashCommandBuilder()
+    .setName('addmoney')
+    .setDescription('通貨を追加（管理者）')
+    .addUserOption(opt => opt.setName('user').setDescription('対象').setRequired(true))
+    .addIntegerOption(opt => opt.setName('amount').setDescription('追加額').setRequired(true)),
+  new SlashCommandBuilder()
+    .setName('removemoney')
+    .setDescription('通貨を減らす（管理者）')
+    .addUserOption(opt => opt.setName('user').setDescription('対象').setRequired(true))
+    .addIntegerOption(opt => opt.setName('amount').setDescription('減額').setRequired(true)),
+  new SlashCommandBuilder()
+    .setName('additem')
+    .setDescription('アイテム追加（管理者）')
+    .addUserOption(opt => opt.setName('user').setDescription('対象').setRequired(true))
+    .addStringOption(opt => opt.setName('item').setDescription('アイテム名').setRequired(true))
+    .addIntegerOption(opt => opt.setName('amount').setDescription('数量').setRequired(true)),
+  new SlashCommandBuilder().setName('resetdb').setDescription('データベース初期化（管理者）'),
+].map(cmd => cmd.toJSON());
+
+async function registerCommands() {
+  const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+  await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: commands });
+  console.log('🌍 グローバルコマンドを登録したよ');
+}
+
 client.on(Events.InteractionCreate, async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
-  const { commandName } = interaction;
+  const userId = interaction.user.id;
+  const jstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  const today = jstNow.toISOString().slice(0, 10);
 
-  try {
-    switch (commandName) {
-      case 'balance': {
-        const { data: user, error } = await supabase
-          .from('users')
-          .select('balance')
-          .eq('user_id', interaction.user.id)
-          .single();
-
-        if (error) throw error;
-        const balance = user ? user.balance : 0;
-        await interaction.reply(`💰 あなたの所持金は ${balance} コインです`);
-        break;
-      }
-
-      case 'daily': {
-        const now = new Date();
-        const { data: user, error } = await supabase
-          .from('users')
-          .select('balance, last_daily')
-          .eq('user_id', interaction.user.id)
-          .single();
-
-        if (error && error.code !== 'PGRST116') throw error;
-
-        if (user && user.last_daily) {
-          const lastDaily = new Date(user.last_daily);
-          if (now - lastDaily < 24 * 60 * 60 * 1000) {
-            return interaction.reply('❌ まだ今日のデイリー報酬は受け取れません');
-          }
-        }
-
-        const reward = Math.floor(Math.random() * 41) + 80; // 80〜120コイン
-
-        if (user) {
-          await supabase
-            .from('users')
-            .update({ balance: user.balance + reward, last_daily: now.toISOString() })
-            .eq('user_id', interaction.user.id);
-        } else {
-          await supabase.from('users').insert({ user_id: interaction.user.id, balance: reward, last_daily: now.toISOString() });
-        }
-
-        await interaction.reply(`🎉 デイリー報酬として ${reward} コインを獲得しました！`);
-        break;
-      }
-
-      case 'give': {
-        const targetUser = interaction.options.getUser('user');
-        const amount = interaction.options.getInteger('amount');
-
-        if (targetUser.id === interaction.user.id) {
-          return interaction.reply({ content: '❌ 自分に送ることはできません', ephemeral: true });
-        }
-        if (amount <= 0) return interaction.reply({ content: '❌ 正の数を指定してください', ephemeral: true });
-
-        const { data: giver, error: giverError } = await supabase
-          .from('users')
-          .select('balance')
-          .eq('user_id', interaction.user.id)
-          .single();
-
-        if (giverError) throw giverError;
-        if (!giver || giver.balance < amount) {
-          return interaction.reply({ content: '❌ 所持金が足りません', ephemeral: true });
-        }
-
-        // トランザクションのように扱う必要があるが簡易版
-        await supabase.from('users').upsert({ user_id: interaction.user.id, balance: giver.balance - amount });
-        const { data: receiver, error: receiverError } = await supabase
-          .from('users')
-          .select('balance')
-          .eq('user_id', targetUser.id)
-          .single();
-
-        if (receiverError && receiverError.code !== 'PGRST116') throw receiverError;
-
-        if (receiver) {
-          await supabase.from('users').update({ balance: receiver.balance + amount }).eq('user_id', targetUser.id);
-        } else {
-          await supabase.from('users').insert({ user_id: targetUser.id, balance: amount });
-        }
-
-        await interaction.reply(`${targetUser.username} に ${amount} コインを送金しました！`);
-        break;
-      }
-
-      case 'shop': {
-        const { data: items, error } = await supabase.from('items').select();
-        if (error) throw error;
-        if (!items.length) return interaction.reply('🛒 商品はありません');
-
-        const list = items.map(i => `**${i.name}** — ${i.price}コイン`).join('\n');
-        await interaction.reply(`🛒 商品一覧:\n${list}`);
-        break;
-      }
-
-      case 'shopinfo': {
-        const itemName = interaction.options.getString('item');
-        const { data: items, error } = await supabase.from('items').select().ilike('name', itemName);
-        if (error) throw error;
-        if (!items.length) return interaction.reply('❌ 商品が見つかりません');
-
-        const item = items[0];
-        await interaction.reply(`🛒 **${item.name}**\n価格: ${item.price}コイン\n説明: ${item.description}`);
-        break;
-      }
-
-      case 'buy': {
-        const itemName = interaction.options.getString('item');
-        const quantity = interaction.options.getInteger('quantity') ?? 1;
-        const userId = interaction.user.id;
-
-        const { data: items, error: itemError } = await supabase.from('items').select().ilike('name', itemName);
-        if (itemError) throw itemError;
-        if (!items.length) return interaction.reply('❌ 商品が見つかりません');
-        const item = items[0];
-
-        const { data: user, error: userError } = await supabase.from('users').select().eq('user_id', userId).single();
-        if (userError && userError.code !== 'PGRST116') throw userError;
-
-        const userBalance = user ? user.balance : 0;
-        const cost = item.price * quantity;
-        if (userBalance < cost) return interaction.reply('❌ 所持金が足りません');
-
-        // 通貨減らす
-        await supabase.from('users').upsert({ user_id: userId, balance: userBalance - cost });
-
-        // アイテム付与
-        const { data: userItem } = await supabase
-          .from('user_items')
-          .select()
-          .eq('user_id', userId)
-          .eq('item_id', item.id)
-          .single();
-
-        if (userItem) {
-          await supabase
-            .from('user_items')
-            .update({ quantity: userItem.quantity + quantity })
-            .eq('user_id', userId)
-            .eq('item_id', item.id);
-        } else {
-          await supabase.from('user_items').insert({ user_id: userId, item_id: item.id, quantity });
-        }
-
-        await interaction.reply(`✅ ${item.name} を ${quantity} 個購入しました。合計 ${cost} コイン支払いました。`);
-        break;
-      }
-
-      case 'inventory': {
-        const userId = interaction.user.id;
-        const { data, error } = await supabase
-          .from('user_items')
-          .select('quantity, items(name)')
-          .eq('user_id', userId);
-
-        if (error) throw error;
-        if (!data.length) return interaction.reply('🎒 所持アイテムはありません');
-
-        const text = data.map(i => `${i.items.name} ×${i.quantity}`).join('\n');
-        await interaction.reply(`🎒 あなたの所持アイテム:\n${text}`);
-        break;
-      }
-
-      case 'rich': {
-        const { data, error } = await supabase
-          .from('users')
-          .select()
-          .order('balance', { ascending: false })
-          .limit(10);
-
-        if (error) throw error;
-        if (!data.length) return interaction.reply('データがありません');
-
-        const leaderboard = data.map((u, i) => `#${i + 1} <@${u.user_id}> — ${u.balance}コイン`).join('\n');
-        await interaction.reply(`💰 所持金ランキング:\n${leaderboard}`);
-        break;
-      }
-
-      case 'help': {
-        const helpText = [
-          '**📝 通貨Bot コマンド一覧**',
-          '`/balance` - 所持金を見る',
-          '`/daily` - 毎日通貨を受け取る',
-          '`/give @user amount` - 他の人に送金',
-          '`/shop` - 商品一覧を見る',
-          '`/buy item [quantity]` - 商品を買う',
-          '`/inventory` - 所持アイテムを確認',
-          '`/shopinfo item` - 商品詳細を確認',
-          '`/rich` - 所持金ランキング',
-          '`/help` - この説明を表示',
-          '`/addmoney @user amount` - 管理者用 通貨を追加',
-          '`/removemoney @user amount` - 管理者用 通貨を減らす',
-          '`/additem name price description` - 管理者用 商品追加',
-          '`/resetdb` - 管理者用 データベース初期化',
-        ].join('\n');
-        await interaction.reply({ content: helpText, ephemeral: true });
-        break;
-      }
-
-      case 'addmoney': {
-        if (!isAdmin(interaction)) return interaction.reply({ content: '🚫 管理者専用コマンドです', ephemeral: true });
-
-        const target = interaction.options.getUser('user');
-        const amount = interaction.options.getInteger('amount');
-
-        if (amount <= 0) return interaction.reply({ content: '❌ 正の数を指定してください', ephemeral: true });
-
-        const { data: user } = await supabase.from('users').select('balance').eq('user_id', target.id).single();
-
-        if (user) {
-          await supabase.from('users').update({ balance: user.balance + amount }).eq('user_id', target.id);
-        } else {
-          await supabase.from('users').insert({ user_id: target.id, balance: amount });
-        }
-        await interaction.reply(`${target.username} に ${amount} コインを追加しました。`);
-        break;
-      }
-
-      case 'removemoney': {
-        if (!isAdmin(interaction)) return interaction.reply({ content: '🚫 管理者専用コマンドです', ephemeral: true });
-
-        const target = interaction.options.getUser('user');
-        const amount = interaction.options.getInteger('amount');
-
-        if (amount <= 0) return interaction.reply({ content: '❌ 正の数を指定してください', ephemeral: true });
-
-        const { data: user } = await supabase.from('users').select('balance').eq('user_id', target.id).single();
-        if (!user || user.balance < amount) return interaction.reply({ content: '❌ 所持金が足りません', ephemeral: true });
-
-        await supabase.from('users').update({ balance: user.balance - amount }).eq('user_id', target.id);
-        await interaction.reply(`${target.username} の通貨を ${amount} コイン減らしました。`);
-        break;
-      }
-
-      case 'additem': {
-        if (!isAdmin(interaction)) return interaction.reply({ content: '🚫 管理者専用コマンドです', ephemeral: true });
-
-        const name = interaction.options.getString('name');
-        const price = interaction.options.getInteger('price');
-        const description = interaction.options.getString('description') ?? '';
-
-        await supabase.from('items').insert({ name, price, description });
-        await interaction.reply(`✅ 商品「${name}」を追加しました（価格: ${price} コイン）`);
-        break;
-      }
-
-      case 'resetdb': {
-        if (!isAdmin(interaction)) return interaction.reply({ content: '🚫 管理者専用コマンドです', ephemeral: true });
-
-        // 注意！ 実運用なら確認を強化すべき
-        await supabase.from('users').delete();
-        await supabase.from('user_items').delete();
-        await supabase.from('items').delete();
-
-        await interaction.reply('⚠️ データベースを初期化しました。');
-        break;
-      }
-
-      default:
-        await interaction.reply('❓ 未実装コマンドです');
+  switch (interaction.commandName) {
+    case 'balance': {
+      const { data: user } = await supabase.from('users').select('balance').eq('user_id', userId).single();
+      await interaction.reply(`💰 所持金：${user?.balance ?? 0} コイン`);
+      break;
     }
-  } catch (e) {
-    console.error(e);
-    interaction.reply({ content: '❌ エラーが発生しました', ephemeral: true });
+
+    case 'daily': {
+      const { data: user } = await supabase.from('users').select('balance, last_daily').eq('user_id', userId).single();
+      if (user?.last_daily === today) return interaction.reply('❌ 今日はもう受け取ってるよ！');
+
+      const reward = Math.floor(Math.random() * 41) + 80;
+      const newBalance = (user?.balance ?? 0) + reward;
+
+      if (user) {
+        await supabase.from('users').update({ balance: newBalance, last_daily: today }).eq('user_id', userId);
+      } else {
+        await supabase.from('users').insert({ user_id: userId, balance: reward, last_daily: today });
+      }
+      await interaction.reply(`🎁 デイリー報酬：${reward}コイン`);
+      break;
+    }
+
+    case 'present': {
+      const { data: user } = await supabase.from('users').select('balance').eq('user_id', userId).single();
+      if (!user || user.balance < 10) return interaction.reply('❌ 10コイン必要だよ');
+
+      const reward = Math.floor(Math.random() * 46) + 5;
+      const newBalance = user.balance - 10 + reward;
+
+      await supabase.from('users').update({ balance: newBalance }).eq('user_id', userId);
+      await interaction.reply(`🎁 10コイン消費 → ${reward}コインゲット！`);
+      break;
+    }
+
+    case 'give': {
+      const target = interaction.options.getUser('user');
+      const amount = interaction.options.getInteger('amount');
+      if (target.id === userId) return interaction.reply('❌ 自分には送れないよ');
+
+      const { data: sender } = await supabase.from('users').select('balance').eq('user_id', userId).single();
+      if (!sender || sender.balance < amount) return interaction.reply('❌ 残高不足だよ');
+
+      const { data: receiver } = await supabase.from('users').select('balance').eq('user_id', target.id).single();
+      await supabase.from('users').upsert({ user_id: target.id, balance: (receiver?.balance ?? 0) + amount });
+      await supabase.from('users').update({ balance: sender.balance - amount }).eq('user_id', userId);
+      await interaction.reply(`✅ ${target.username} に ${amount} コイン送ったよ`);
+      break;
+    }
+
+    case 'shop': {
+      const { data: items } = await supabase.from('shop').select('*');
+      if (!items || items.length === 0) return interaction.reply('🛒 ショップは空だよ');
+      const list = items.map(i => `- ${i.name}（${i.price}コイン）`).join('\n');
+      await interaction.reply(`🛍️ 商品一覧：\n${list}`);
+      break;
+    }
+
+    case 'shopinfo': {
+      const name = interaction.options.getString('item');
+      const { data: item } = await supabase.from('shop').select('*').ilike('name', name).single();
+      if (!item) return interaction.reply('❌ 商品が見つからないよ');
+      await interaction.reply(`📦 ${item.name}\n価格: ${item.price}コイン\n説明: ${item.description || 'なし'}`);
+      break;
+    }
+
+    case 'buy': {
+      const name = interaction.options.getString('item');
+      const quantity = interaction.options.getInteger('quantity') || 1;
+
+      const { data: item } = await supabase.from('shop').select('*').ilike('name', name).single();
+      if (!item) return interaction.reply('❌ 商品が存在しないよ');
+
+      const { data: user } = await supabase.from('users').select('balance, items').eq('user_id', userId).single();
+      if (!user || user.balance < item.price * quantity) {
+        return interaction.reply('❌ コイン足りないよ');
+      }
+
+      const items = user.items || {};
+      items[item.name] = (items[item.name] || 0) + quantity;
+
+      await supabase.from('users')
+        .update({ balance: user.balance - item.price * quantity, items })
+        .eq('user_id', userId);
+
+      await interaction.reply(`✅ ${item.name} ×${quantity} を購入したよ`);
+      break;
+    }
+
+    case 'inventory': {
+      const { data: user } = await supabase.from('users').select('items').eq('user_id', userId).single();
+      const entries = Object.entries(user?.items || {});
+      if (entries.length === 0) return interaction.reply('🎒 アイテムなし');
+      const list = entries.map(([k, v]) => `- ${k} ×${v}`).join('\n');
+      await interaction.reply(`🎒 所持アイテム：\n${list}`);
+      break;
+    }
+
+    case 'help': {
+      await interaction.reply(`
+💬 利用可能コマンド：
+
+/balance - 所持金を確認
+/daily - 毎日通貨
+/present - プレゼント開封
+/give - 他ユーザーに送金
+/shop - 商品一覧
+/shopinfo - 商品の説明
+/buy - 商品を買う
+/inventory - 所持アイテム
+/help - コマンド一覧
+
+管理者用：/addmoney /removemoney /additem /resetdb`);
+      break;
+    }
+
+    case 'addmoney': {
+      if (!isAdmin(interaction)) return interaction.reply('❌ 管理者専用だよ');
+      const target = interaction.options.getUser('user');
+      const amount = interaction.options.getInteger('amount');
+      const { data: user } = await supabase.from('users').select('balance').eq('user_id', target.id).single();
+      const balance = (user?.balance ?? 0) + amount;
+      await supabase.from('users').upsert({ user_id: target.id, balance });
+      await interaction.reply(`✅ ${target.username} に ${amount} コイン追加`);
+      break;
+    }
+
+    case 'removemoney': {
+      if (!isAdmin(interaction)) return interaction.reply('❌ 管理者専用だよ');
+      const target = interaction.options.getUser('user');
+      const amount = interaction.options.getInteger('amount');
+      const { data: user } = await supabase.from('users').select('balance').eq('user_id', target.id).single();
+      const balance = Math.max((user?.balance ?? 0) - amount, 0);
+      await supabase.from('users').upsert({ user_id: target.id, balance });
+      await interaction.reply(`✅ ${target.username} から ${amount} コイン減額`);
+      break;
+    }
+
+    case 'additem': {
+      if (!isAdmin(interaction)) return interaction.reply('❌ 管理者専用だよ');
+      const target = interaction.options.getUser('user');
+      const item = interaction.options.getString('item');
+      const amount = interaction.options.getInteger('amount');
+      const { data: user } = await supabase.from('users').select('items').eq('user_id', target.id).single();
+      const items = user?.items || {};
+      items[item] = (items[item] || 0) + amount;
+      await supabase.from('users').upsert({ user_id: target.id, items });
+      await interaction.reply(`✅ ${target.username} に ${item} ×${amount} 追加`);
+      break;
+    }
+
+    case 'resetdb': {
+      if (!isAdmin(interaction)) return interaction.reply('❌ 管理者専用だよ');
+      await supabase.from('users').delete().neq('user_id', '');
+      await interaction.reply('🗑️ ユーザーデータ初期化完了');
+      break;
+    }
   }
 });
 
-client.once('ready', () => {
-  console.log(`Logged in as ${client.user.tag}`);
+client.once(Events.ClientReady, () => {
+  console.log(`✅ ログイン成功: ${client.user.tag}`);
 });
 
-client.login(process.env.DISCORD_TOKEN);
+(async () => {
+  await registerCommands();
+  await client.login(process.env.DISCORD_TOKEN);
+})();
