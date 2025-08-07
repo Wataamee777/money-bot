@@ -124,19 +124,19 @@ client.on(Events.InteractionCreate, async interaction => {
       return interaction.reply(`✅ ${target.username} に ${amount} コイン送金したよ`);
     }
 
-    case 'shop': {
-      const { data: items } = await supabase.from('shop').select('*');
-      if (!items?.length) return interaction.reply('🛒 ショップは空だよ');
-      const list = items.map(i => `- ${i.name}（${i.price}コイン）`).join('\n');
-      return interaction.reply(`🛍️ 商品一覧:\n${list}`);
-    }
+case 'shop': {
+  const { data: shopItems } = await supabase.from('shop').select('*');
+  if (!shopItems || shopItems.length === 0) return interaction.reply('🛒 ショップは空だよ');
+  const list = shopItems.map(i => `- ${i.name}（${i.price}コイン）`).join('\n');
+  await interaction.reply(`🛍️ 商品一覧：\n${list}`);
+}
 
     case 'shopinfo': {
-      const name = interaction.options.getString('item');
-      const { data: item } = await supabase.from('shop').select('*').eq('name', name).single();
-      if (!item) return interaction.reply('❌ 商品が見つからないよ');
-      return interaction.reply(`📦 ${item.name}\n価格: ${item.price}コイン\n説明: ${item.description || 'なし'}`);
-    }
+  const name = interaction.options.getString('item');
+  const { data: item } = await supabase.from('shop').select('*').ilike('name', name).single();
+  if (!item) return interaction.reply('❌ 商品が見つからないよ');
+  await interaction.reply(`📦 ${item.name}\n価格: ${item.price}コイン\n説明: ${item.description || 'なし'}`);
+}
 
     case 'additem': {
       if (!isAdmin(interaction)) return interaction.reply('❌ 管理者専用だよ');
@@ -219,6 +219,78 @@ client.on(Events.InteractionCreate, async interaction => {
       }));
       return interaction.reply(`🏆 残高ランキング:\n${list.join('\n')}`);
     }
+      
+case 'buy': {
+  const userId = interaction.user.id;
+  const itemName = interaction.options.getString('item');
+  const quantity = interaction.options.getInteger('quantity') || 1;
+
+  // 1. ショップから商品取得
+  const { data: shopItem, error: shopError } = await supabase
+    .from('shop')
+    .select('name, price')
+    .ilike('name', itemName)
+    .single();
+
+  if (shopError || !shopItem) {
+    return interaction.reply('❌ 商品が存在しないよ');
+  }
+
+  const totalPrice = shopItem.price * quantity;
+
+  // 2. ユーザーの所持金取得
+  const { data: user, error: userError } = await supabase
+    .from('users')
+    .select('balance')
+    .eq('user_id', userId)
+    .single();
+
+  if (userError || !user || user.balance < totalPrice) {
+    return interaction.reply('❌ コインが足りないよ');
+  }
+
+  // 3. itemsテーブルから商品IDを取得
+  const { data: itemData, error: itemError } = await supabase
+    .from('items')
+    .select('id')
+    .ilike('name', itemName)
+    .single();
+
+  if (itemError || !itemData) {
+    return interaction.reply('❌ 商品がアイテムマスタに登録されていないよ');
+  }
+
+  // 4. user_items に追加 or 数量アップデート
+  // 既に所持してるかチェック
+  const { data: userItem, error: userItemError } = await supabase
+    .from('user_items')
+    .select('quantity')
+    .eq('user_id', userId)
+    .eq('item_id', itemData.id)
+    .single();
+
+  if (userItem) {
+    // 更新
+    await supabase
+      .from('user_items')
+      .update({ quantity: userItem.quantity + quantity })
+      .eq('user_id', userId)
+      .eq('item_id', itemData.id);
+  } else {
+    // 新規挿入
+    await supabase
+      .from('user_items')
+      .insert({ user_id: userId, item_id: itemData.id, quantity });
+  }
+
+  // 5. 所持金減らす
+  await supabase
+    .from('users')
+    .update({ balance: user.balance - totalPrice })
+    .eq('user_id', userId);
+
+  return interaction.reply(`✅ ${shopItem.name} ×${quantity} を購入したよ！`);
+}
 
     case 'help': {
       return interaction.reply(`
