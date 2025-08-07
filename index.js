@@ -186,7 +186,6 @@ client.on(Events.InteractionCreate, async interaction => {
       await interaction.reply(`
 💬 利用可能コマンド：
 
-/balance - 所持金を確認
 /daily - 毎日通貨
 /present - プレゼント開封
 /give - 他ユーザーに送金
@@ -195,10 +194,46 @@ client.on(Events.InteractionCreate, async interaction => {
 /buy - 商品を買う
 /inventory - 所持アイテム
 /help - コマンド一覧
+/rich - ランキングを表示
 
 管理者用：/addmoney /removemoney /additem /resetdb`);
       break;
     }
+      
+case 'rich': {
+  // ユーザー残高をSupabaseから取得（例: top10）
+  const { data: users, error } = await supabase
+    .from('users')
+    .select('user_id, balance')
+    .order('balance', { ascending: false })
+    .limit(10);
+
+  if (error || !users || users.length === 0) {
+    return interaction.reply('ランキングがありません。');
+  }
+
+  const guild = interaction.guild;
+  if (!guild) {
+    return interaction.reply('ギルド情報が取得できません。');
+  }
+
+  // ユーザー名を順に取得
+  const lines = [];
+  for (let i = 0; i < users.length; i++) {
+    const u = users[i];
+    try {
+      const member = await guild.members.fetch(u.user_id);
+      const name = member ? member.user.username : 'Unknown';
+      lines.push(`${i + 1}位: ${name} - ${u.balance} コイン`);
+    } catch {
+      // 取得失敗時はUnknownで
+      lines.push(`${i + 1}位: Unknown - ${u.balance} コイン`);
+    }
+  }
+
+  await interaction.reply(`💰 残高ランキング\n` + lines.join('\n'));
+  break;
+}
 
     case 'addmoney': {
       if (!isAdmin(interaction)) return interaction.reply('❌ 管理者専用だよ');
