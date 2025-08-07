@@ -23,6 +23,7 @@ function isAdmin(interaction) {
 
 const commands = [
   new SlashCommandBuilder().setName('balance').setDescription('所持金を確認'),
+  new SlashCommandBuilder().setName('rich').setDescription('ランキングを確認'),
   new SlashCommandBuilder().setName('daily').setDescription('毎日通貨を受け取る'),
   new SlashCommandBuilder().setName('present').setDescription('10コインでランダム報酬をもらう'),
   new SlashCommandBuilder()
