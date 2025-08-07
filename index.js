@@ -152,11 +152,37 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 
     case 'inventory': {
-      const { data: user } = await supabase.from('users').select('balance, items').eq('user_id', userId).single();
-      const items = user?.items || {};
-      const itemList = Object.entries(items).map(([k, v]) => `- ${k} ×${v}`).join('\n') || '（なし）';
-      return interaction.reply(`💰 所持金: ${user?.balance ?? 0}\n🎒 持ち物:\n${itemList}`);
-    }
+  const userId = interaction.user.id;
+
+  // 所持金取得
+  const { data: user } = await supabase
+    .from('users')
+    .select('balance')
+    .eq('user_id', userId)
+    .single();
+
+  // アイテム取得（JOINで名前も取る）
+  const { data: items } = await supabase
+    .from('user_items')
+    .select('item_id, quantity, items(name)')
+    .eq('user_id', userId);
+
+  const balanceText = `💰 所持金: ${user?.balance ?? 0} コイン`;
+
+  let itemText = '🎒 インベントリ:\n';
+
+  if (!items || items.length === 0) {
+    itemText += '（アイテムなし）';
+  } else {
+    itemText += items
+      .map(item => `- ${item.items?.name ?? `ID:${item.item_id}`} ×${item.quantity}`)
+      .join('\n');
+  }
+
+  await interaction.reply(`${balanceText}\n${itemText}`);
+  break;
+}
+
 
     case 'addmoney': {
       if (!isAdmin(interaction)) return interaction.reply('❌ 管理者専用');
