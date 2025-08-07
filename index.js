@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { Client, GatewayIntentBits, Events, REST, Routes, SlashCommandBuilder } from 'discord.js';
 import { createClient } from '@supabase/supabase-js';
+import express from 'express';
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
@@ -74,11 +75,6 @@ client.on(Events.InteractionCreate, async interaction => {
   const today = jstNow.toISOString().slice(0, 10);
 
   switch (interaction.commandName) {
-    case 'balance': {
-      const { data: user } = await supabase.from('users').select('balance').eq('user_id', userId).single();
-      await interaction.reply(`💰 所持金：${user?.balance ?? 0} コイン`);
-      break;
-    }
 
     case 'daily': {
       const { data: user } = await supabase.from('users').select('balance, last_daily').eq('user_id', userId).single();
@@ -163,14 +159,29 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 
     case 'inventory': {
-      const { data: user } = await supabase.from('users').select('items').eq('user_id', userId).single();
-      const entries = Object.entries(user?.items || {});
-      if (entries.length === 0) return interaction.reply('🎒 アイテムなし');
-      const list = entries.map(([k, v]) => `- ${k} ×${v}`).join('\n');
-      await interaction.reply(`🎒 所持アイテム：\n${list}`);
-      break;
-    }
+  // ユーザーの所持金とアイテムを一括取得
+  const { data: user } = await supabase
+    .from('users')
+    .select('balance, items')
+    .eq('user_id', interaction.user.id)
+    .single();
 
+  if (!user) {
+    return interaction.reply('🎒 所持金もアイテムも何もないよ！');
+  }
+
+  const items = user.items || {};
+  const itemList = Object.entries(items)
+    .map(([name, qty]) => `- ${name} ×${qty}`)
+    .join('\n') || '（アイテムなし）';
+
+  await interaction.reply(
+    `💰 所持金: ${user.balance} コイン\n` +
+    `🎒 インベントリ:\n${itemList}`
+  );
+  break;
+}
+      
     case 'help': {
       await interaction.reply(`
 💬 利用可能コマンド：
