@@ -100,10 +100,10 @@ client.on(Events.InteractionCreate, async interaction => {
 
     case 'present': {
       const { data: user } = await supabase.from('users').select('balance').eq('user_id', userId).single();
-      if (!user || user.balance < 10) return interaction.reply('❌ 10コイン必要だよ');
+      if (!user || user.balance < 100) return interaction.reply('❌ 100コイン必要だよ');
 
-      const reward = Math.floor(Math.random() * 46) + 5;
-      const newBalance = user.balance - 10 + reward;
+      const reward = Math.floor(Math.random() * 100) + 0;
+      const newBalance = user.balance - 101 + reward;
 
       await supabase.from('users').update({ balance: newBalance }).eq('user_id', userId);
       return interaction.reply(`🎁 プレゼント報酬：${reward}コイン`);
