@@ -24,7 +24,7 @@ function isAdmin(interaction) {
 const commands = [
   new SlashCommandBuilder().setName('rich').setDescription('ランキングを見る'),
   new SlashCommandBuilder().setName('daily').setDescription('毎日コインを受け取る'),
-  new SlashCommandBuilder().setName('present').setDescription('10コインでランダム報酬'),
+  new SlashCommandBuilder().setName('present').setDescription('100コインでランダム報酬'),
 
   new SlashCommandBuilder()
     .setName('gift')
